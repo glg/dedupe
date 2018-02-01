@@ -4,29 +4,29 @@
 dedupe provides the main user interface for the library the
 Dedupe class
 """
-from __future__ import print_function, division
-from future.utils import viewitems, viewvalues, viewkeys
+from __future__ import division, print_function
+from future.utils import viewitems, viewkeys, viewvalues
 
 import itertools
 import logging
-import pickle
 import multiprocessing
+import os
+import pickle
 import random
 import warnings
-import os
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 
-import numpy
-import simplejson as json
-import rlr
-
-import dedupe.core as core
-import dedupe.training as training
-import dedupe.serializer as serializer
 import dedupe.blocking as blocking
 import dedupe.clustering as clustering
+import dedupe.core as core
 import dedupe.datamodel as datamodel
 import dedupe.labeler as labeler
+import dedupe.serializer as serializer
+import dedupe.training as training
+import numpy
+import rlr
+import simplejson as json
+
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class Matching(object):
     - `__init__`
     - `thresholdBlocks`
     - `matchBlocks`
+
+    Subclasses must implement the class method _blockedPairs
     """
     def __init__(self, num_cores):
         if num_cores is None:
@@ -49,25 +51,42 @@ class Matching(object):
 
         self.loaded_indices = False
 
+    def _blockedPairs(self, blocks):
+        """_blockedPairs returns a sequence that is the same length as blocks.
+        Each element of the sequence is in turn an iterable of unique pairs of
+        records from the corresponding block.  The set of pairs is exhaustive
+        i.e. that is, all unique pairs of records in the block are included.
+
+        :param blocks: Sequence of blocks that each has a set of records in it.
+        """
+        raise NotImplementedError
+
+    def _checkBlock(self, block):
+        """_checkBlock verifies that the first element in the block conforms to
+        the schema for the data model
+
+        :param block: block to check for conformance
+        """
+        raise NotImplementedError
+
     def thresholdBlocks(self, blocks, recall_weight=1.5):  # pragma: nocover
         """
         Returns the threshold that maximizes the expected F score, a
         weighted average of precision and recall for a sample of
         blocked data.
 
-        Arguments:
+        :param blocks: Sequence of tuples of records, where each tuple is a set
+        of records covered by a blocking predicate
 
-        blocks -- Sequence of tuples of records, where each tuple is a
-                  set of records covered by a blocking predicate
-
-        recall_weight -- Sets the tradeoff between precision and
-                         recall. I.e. if you care twice as much about
-                         recall as you do precision, set recall_weight
-                         to 2.
-
+        :param recall_weight: Sets the tradeoff between precision and recall
+        i.e. if you care twice as much about recall as you do precision, set
+        recall_weight to 2.
         """
-        candidate_records = itertools.chain.from_iterable(self._blockedPairs(blocks))
+        logger.debug('Creating candidate record pairs for all blocks')
+        candidate_records = itertools.chain.from_iterable(
+            self._blockedPairs(blocks))
 
+        logger.debug('Scoring candidate record pairs')
         probability = core.scoreDuplicates(candidate_records,
                                            self.data_model,
                                            self.classifier,
@@ -217,7 +236,7 @@ class DedupeMatching(Matching):
 
         """
         blocked_pairs = self._blockData(data)
-        clusters = self.matchBlocks(blocked_pairs, threshold) 
+        clusters = self.matchBlocks(blocked_pairs, threshold)
         if generator:
             return clusters
         else:
@@ -244,20 +263,19 @@ class DedupeMatching(Matching):
         return self.thresholdBlocks(blocked_pairs, recall_weight)
 
     def _blockedPairs(self, blocks):
+        """_blockedPairs returns a sequence that is the same length as blocks.
+        Each element of the sequence is in turn an iterable of unique pairs of
+        records from the corresponding block.  The set of pairs is exhaustive
+        i.e. that is, all unique pairs of records in the block are included.
+
+        :param blocks: Sequence of blocks that each has a set of records in it.
         """
-        Generate tuples of pairs of records from a block of records
-
-        Arguments:
-
-        blocks -- an iterable sequence of blocked records
-        """
-
+        logger.debug('Generating all record pairs within each block')
         block, blocks = core.peek(blocks)
+        # double check that the first record (as a proxy) meets the schema of
+        # our data model
         self._checkBlock(block)
-
-        combinations = itertools.combinations
-
-        pairs = (combinations(sorted(block), 2) for block in blocks)
+        pairs = (itertools.combinations(sorted(block), 2) for block in blocks)
 
         return pairs
 
@@ -271,7 +289,7 @@ class DedupeMatching(Matching):
 
         block_groups = itertools.groupby(self.blocker(viewitems(data_d)),
                                          lambda x: x[1])
-        
+
         for record_id, block in block_groups:
             block_keys = [block_key for block_key, _ in block]
             coverage[record_id] = block_keys
@@ -298,16 +316,22 @@ class DedupeMatching(Matching):
 
             yield processed_block
 
-                
+
     def _checkBlock(self, block):
+        """_checkBlock
+
+        :param block: Verifies that the first element in the block conforms to
+        the schema that we expect
+        """
         if block:
             try:
+                # TODO: What are smaller_ids? - VSM
                 id, record, smaller_ids = block[0]
             except:
                 raise ValueError(
-                        "Each item in a block must be a sequence of "
-                        "record_id, record, and smaller ids and the "
-                        "records also must be dictionaries")
+                    "Each item in a block must be a sequence of "
+                    "record_id, record, and smaller ids and the "
+                    "records also must be dictionaries")
             try:
                 record.items()
                 smaller_ids.isdisjoint([])
@@ -671,7 +695,7 @@ class ActiveMatching(Matching):
                             Defaults to True.
         """
         examples, y = flatten_training(self.training_pairs)
-        self.classifier.fit(self.data_model.distances(examples), y)            
+        self.classifier.fit(self.data_model.distances(examples), y)
 
         self._trainBlocker(recall, index_predicates)
 
@@ -796,11 +820,11 @@ class Dedupe(DedupeMatching, ActiveMatching):
 
         sample_size         -- Size of the sample to draw
         blocked_proportion  -- Proportion of the sample that will be blocked
-        original_length     -- Length of original data, should be set if `data` is 
+        original_length     -- Length of original data, should be set if `data` is
                                a sample of full data
         '''
         self._checkData(data)
-        
+
         data = core.index(data)
 
         if original_length is None:
@@ -856,7 +880,7 @@ class RecordLink(RecordLinkMatching, ActiveMatching):
         sample_size -- Size of the sample to draw
         '''
         self._checkData(data_1, data_2)
-        
+
         data_1 = core.index(data_1)
         if original_length_1 is None:
             original_length_1 = len(data_1)
