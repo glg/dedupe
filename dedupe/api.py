@@ -5,16 +5,16 @@ dedupe provides the main user interface for the library the
 Dedupe class
 """
 from __future__ import print_function, division
-from future.utils import viewitems, viewvalues, viewkeys
+from future.utils import viewitems, viewvalues
+from builtins import super
 
 import itertools
 import logging
 import pickle
 import multiprocessing
-import random
 import warnings
 import os
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 
 import numpy
 import simplejson as json
@@ -41,6 +41,7 @@ class Matching(object):
     - `thresholdBlocks`
     - `matchBlocks`
     """
+
     def __init__(self, num_cores):
         if num_cores is None:
             self.num_cores = multiprocessing.cpu_count()
@@ -184,7 +185,7 @@ class DedupeMatching(Matching):
     """
 
     def __init__(self, *args, **kwargs):
-        super(DedupeMatching, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self._cluster = clustering.cluster
         self._linkage_type = "Dedupe"
 
@@ -217,7 +218,7 @@ class DedupeMatching(Matching):
 
         """
         blocked_pairs = self._blockData(data)
-        clusters = self.matchBlocks(blocked_pairs, threshold) 
+        clusters = self.matchBlocks(blocked_pairs, threshold)
         if generator:
             return clusters
         else:
@@ -271,7 +272,7 @@ class DedupeMatching(Matching):
 
         block_groups = itertools.groupby(self.blocker(viewitems(data_d)),
                                          lambda x: x[1])
-        
+
         for record_id, block in block_groups:
             block_keys = [block_key for block_key, _ in block]
             coverage[record_id] = block_keys
@@ -293,25 +294,25 @@ class DedupeMatching(Matching):
         for block_key, block in blocks.items():
             processed_block = []
             for record_id in block:
-                smaller_blocks = {k for k in coverage[record_id] if k < block_key}
+                smaller_blocks = {k for k in coverage[record_id]
+                                  if k < block_key}
                 processed_block.append((record_id, data_d[record_id], smaller_blocks))
 
             yield processed_block
 
-                
     def _checkBlock(self, block):
         if block:
             try:
                 id, record, smaller_ids = block[0]
-            except:
+            except (ValueError, KeyError):
                 raise ValueError(
-                        "Each item in a block must be a sequence of "
-                        "record_id, record, and smaller ids and the "
-                        "records also must be dictionaries")
+                    "Each item in a block must be a sequence of "
+                    "record_id, record, and smaller ids and the "
+                    "records also must be dictionaries")
             try:
                 record.items()
                 smaller_ids.isdisjoint([])
-            except:
+            except AttributeError:
                 raise ValueError("The record must be a dictionary and "
                                  "smaller_ids must be a set")
 
@@ -333,7 +334,7 @@ class RecordLinkMatching(Matching):
     """
 
     def __init__(self, *args, **kwargs):
-        super(RecordLinkMatching, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self._cluster = clustering.greedyMatching
         self._linkage_type = "RecordLink"
@@ -455,25 +456,25 @@ class RecordLinkMatching(Matching):
         if block:
             try:
                 base, target = block
-            except:
+            except ValueError:
                 raise ValueError("Each block must be a made up of two "
                                  "sequences, (base_sequence, target_sequence)")
 
             if base:
                 try:
                     base_id, base_record, base_smaller_ids = base[0]
-                except:
+                except ValueError:
                     raise ValueError(
-                            "Each sequence must be made up of 3-tuple "
-                            "like (record_id, record, covered_blocks)")
+                        "Each sequence must be made up of 3-tuple "
+                        "like (record_id, record, covered_blocks)")
                 self.data_model.check(base_record)
             if target:
                 try:
                     target_id, target_record, target_smaller_ids = target[0]
-                except:
+                except ValueError:
                     raise ValueError(
-                              "Each sequence must be made up of 3-tuple "
-                              "like (record_id, record, covered_blocks)")
+                        "Each sequence must be made up of 3-tuple "
+                        "like (record_id, record, covered_blocks)")
                 self.data_model.check(target_record)
 
 
@@ -518,7 +519,7 @@ class StaticMatching(Matching):
                 "This settings file is not compatible with "
                 "the current version of dedupe. This can happen "
                 "if you have recently upgraded dedupe.")
-        except:
+        except:  # noqa: E722
             raise SettingsFileLoadingException(
                 "Something has gone wrong with loading the settings file. "
                 "Try deleting the file")
@@ -532,7 +533,7 @@ class StaticMatching(Matching):
                 "This settings file is not compatible with "
                 "the current version of dedupe. This can happen "
                 "if you have recently upgraded dedupe.")
-        except:
+        except:  # noqa: E722
             raise SettingsFileLoadingException(
                 "Something has gone wrong with loading the settings file. "
                 "Try deleting the file")
@@ -567,7 +568,7 @@ class StaticMatching(Matching):
 
 class ActiveMatching(Matching):
     classifier = rlr.RegularizedLogisticRegression()
-    ActiveLearner = labeler.RLRLearner
+    ActiveLearner = labeler.DisagreementLearner
 
     """
     Class for training dedupe extends Matching.
@@ -617,7 +618,8 @@ class ActiveMatching(Matching):
         self.data_model = datamodel.DataModel(variable_definition)
 
         if data_sample is not None:
-            raise UserWarning('data_sample is deprecated, use the .sample method')
+            raise UserWarning(
+                'data_sample is deprecated, use the .sample method')
 
         self.active_learner = None
 
@@ -671,22 +673,12 @@ class ActiveMatching(Matching):
                             Defaults to True.
         """
         examples, y = flatten_training(self.training_pairs)
-        self.classifier.fit(self.data_model.distances(examples), y)            
+        self.classifier.fit(self.data_model.distances(examples), y)
 
-        self._trainBlocker(recall, index_predicates)
-
-    def _trainBlocker(self, recall, index_predicates):  # pragma: no cover
-        matches = self.training_pairs['match'][:]
-
-        predicate_set = self.data_model.predicates(index_predicates,
-                                                   self.canopies)
-
-        block_learner = self._blockLearner(predicate_set)
-
-        self.predicates = block_learner.learn(matches,
-                                              recall)
-
+        self.predicates = self.active_learner.learn_predicates(
+            recall, index_predicates)
         self.blocker = blocking.Blocker(self.predicates)
+        self.blocker.resetIndices()
 
     def writeTraining(self, file_obj):  # pragma: no cover
         """
@@ -734,7 +726,7 @@ class ActiveMatching(Matching):
             labeled_pairs.items()
             labeled_pairs[u'match']
             labeled_pairs[u'distinct']
-        except:
+        except (AttributeError, KeyError):
             raise ValueError('labeled_pairs must be a dictionary with keys '
                              '"distinct" and "match"')
 
@@ -749,25 +741,21 @@ class ActiveMatching(Matching):
         if not labeled_pairs[u'distinct'] and not labeled_pairs[u'match']:
             warnings.warn("Didn't return any labeled record pairs")
 
-
     def _checkRecordPair(self, record_pair):
         try:
-            record_pair[0]
-        except:
-            raise ValueError("The elements of data_sample must be pairs "
-                             "of record_pairs (ordered sequences of length 2)")
-
-        if len(record_pair) != 2:
+            a, b = record_pair
+        except ValueError:
             raise ValueError("The elements of data_sample must be pairs "
                              "of record_pairs")
         try:
             record_pair[0].keys() and record_pair[1].keys()
-        except:
+        except AttributeError:
             raise ValueError("A pair of record_pairs must be made up of two "
                              "dictionaries ")
 
         self.data_model.check(record_pair[0])
         self.data_model.check(record_pair[1])
+
 
 class StaticDedupe(DedupeMatching, StaticMatching):
     """
@@ -796,19 +784,14 @@ class Dedupe(DedupeMatching, ActiveMatching):
 
         sample_size         -- Size of the sample to draw
         blocked_proportion  -- Proportion of the sample that will be blocked
-        original_length     -- Length of original data, should be set if `data` is 
+        original_length     -- Length of original data, should be set if `data` is
                                a sample of full data
         '''
         self._checkData(data)
-        
-        data = core.index(data)
-
-        if original_length is None:
-            original_length = len(data)
-        self.sampled_records = Sample(data, 2000, original_length)
 
         self.active_learner = self.ActiveLearner(self.data_model)
-        self.active_learner.sample_combo(data, blocked_proportion, sample_size)
+        self.sampled_records = self.active_learner.sample_combo(
+            data, blocked_proportion, sample_size, original_length)
 
     def _blockLearner(self, predicates):
         return training.DedupeBlockLearner(predicates,
@@ -856,21 +839,13 @@ class RecordLink(RecordLinkMatching, ActiveMatching):
         sample_size -- Size of the sample to draw
         '''
         self._checkData(data_1, data_2)
-        
-        data_1 = core.index(data_1)
-        if original_length_1 is None:
-            original_length_1 = len(data_1)
-        self.sampled_records_1 = Sample(data_1, 600, original_length_1)
-
-        offset = len(data_1)
-        data_2 = core.index(data_2, offset)
-        if original_length_2 is None:
-            original_length_2 = len(data_2)
-        self.sampled_records_2 = Sample(data_2, 600, original_length_2)
 
         self.active_learner = self.ActiveLearner(self.data_model)
-        self.active_learner.sample_product(data_1, data_2,
-                                           blocked_proportion, sample_size)
+        self.sampled_records = self.active_learner.sample_product(data_1, data_2,
+                                                                  blocked_proportion,
+                                                                  sample_size,
+                                                                  original_length_1,
+                                                                  original_length_2)
 
     def _blockLearner(self, predicates):
         return training.RecordLinkBlockLearner(predicates,
@@ -889,11 +864,10 @@ class RecordLink(RecordLinkMatching, ActiveMatching):
         self.data_model.check(next(iter(viewvalues(data_2))))
 
 
-
 class GazetteerMatching(RecordLinkMatching):
 
     def __init__(self, *args, **kwargs):
-        super(GazetteerMatching, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self._cluster = clustering.gazetteMatching
         self._linkage_type = "GazetteerMatching"
@@ -986,6 +960,8 @@ class GazetteerMatching(RecordLinkMatching):
 
         clusters = self.matchBlocks(blocked_pairs, threshold, n_matches)
 
+        clusters = (cluster for cluster in clusters if len(cluster))
+
         if generator:
             return clusters
         else:
@@ -1019,7 +995,7 @@ class GazetteerMatching(RecordLinkMatching):
         Keyword arguments:
         file_obj -- file object to write settings data into
         """
-        super(GazetteerMatching, self).writeSettings(file_obj, index)
+        super().writeSettings(file_obj, index)
 
         if index:
             pickle.dump(self.blocked_records, file_obj)
@@ -1028,14 +1004,14 @@ class GazetteerMatching(RecordLinkMatching):
 class Gazetteer(RecordLink, GazetteerMatching):
 
     def __init__(self, *args, **kwargs):  # pragma: no cover
-        super(Gazetteer, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.blocked_records = OrderedDict({})
 
 
 class StaticGazetteer(StaticRecordLink, GazetteerMatching):
 
     def __init__(self, *args, **kwargs):
-        super(StaticGazetteer, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         settings_file = args[0]
 
@@ -1048,7 +1024,7 @@ class StaticGazetteer(StaticRecordLink, GazetteerMatching):
                 "This settings file is not compatible with "
                 "the current version of dedupe. This can happen "
                 "if you have recently upgraded dedupe.")
-        except:
+        except:  # noqa: E722
             raise SettingsFileLoadingException(
                 "Something has gone wrong with loading the settings file. "
                 "Try deleting the file")
@@ -1061,18 +1037,6 @@ class EmptyTrainingException(Exception):
 class SettingsFileLoadingException(Exception):
     pass
 
-
-class Sample(dict):
-
-    def __init__(self, d, sample_size, original_length):
-        if len(d) <= sample_size:
-            super(Sample, self).__init__(d)
-        else:
-            super(Sample, self).__init__({k: d[k]
-                                          for k
-                                          in random.sample(viewkeys(d),
-                                                           sample_size)})
-        self.original_length = original_length
 
 def flatten_training(training_pairs):
     examples = []
@@ -1087,4 +1051,3 @@ def flatten_training(training_pairs):
                 examples.append(pair)
 
     return examples, numpy.array(y)
-
