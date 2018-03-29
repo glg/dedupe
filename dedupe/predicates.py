@@ -438,7 +438,7 @@ def wholeSetPredicate(field_set):
 
 def commonSetElementPredicate(field_set):
     """return set as individual elements"""
-    return tuple([str(each) for each in field_set])
+    return tuple(sorted(set(str(each) for each in field_set)))
 
 
 def commonTwoElementsPredicate(field):
