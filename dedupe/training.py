@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class BlockLearner(object):
-    def learn(self, matches, recall):
+    def learn(self, matches, recall, exclude_exists_compounds=True):
         '''
         Takes in a set of training pairs and predicates and tries to find
         a good set of blocking rules.
@@ -22,7 +22,8 @@ class BlockLearner(object):
         compound_length = 2
 
         dupe_cover = cover(self.blocker, matches,
-                           self.total_cover, compound_length)
+                           self.total_cover, compound_length,
+                           exclude_exists_compounds)
         comparison_count = self.comparisons(dupe_cover, compound_length)
 
         dupe_cover = dominators(dupe_cover, comparison_count, comparison=True)
@@ -258,10 +259,10 @@ class BranchBound(object):
         return coverage
 
 
-def cover(blocker, pairs, total_cover, compound_length):  # pragma: no cover
+def cover(blocker, pairs, total_cover, compound_length, exclude_exists_compounds=True):  # pragma: no cover
     cover = coveredPairs(blocker.predicates, pairs)
     cover = dominators(cover, total_cover)
-    cover = compound(cover, compound_length)
+    cover = compound(cover, compound_length, exclude_exists_compounds)
     cover = remaining_cover(cover)
 
     return cover
@@ -281,7 +282,7 @@ def coveredPairs(predicates, pairs):
     return cover
 
 
-def compound(cover, compound_length):
+def compound(cover, compound_length, exclude_exists_compounds=True):
     simple_predicates = sorted(cover, key=str)
     CP = predicates.CompoundPredicate
 
@@ -292,6 +293,12 @@ def compound(cover, compound_length):
             a, b = compound_predicate[:-1], compound_predicate[-1]
             if len(a) == 1:
                 a = a[0]
+
+            # compounds of two Exists predicates are usually bad, so exclude
+            if exclude_exists_compounds and \
+               isinstance(a, predicates.ExistsPredicate) and \
+               isinstance(b, predicates.ExistsPredicate):
+                continue
 
             if a in cover:
                 compound_cover = cover[a] & cover[b]
