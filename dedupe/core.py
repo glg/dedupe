@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 from builtins import range, next, zip, map
 from future.utils import viewvalues
-import sys
 
+import sys
 import itertools
 import time
 import tempfile
@@ -83,7 +83,7 @@ def randomPairsMatch(n_records_A, n_records_B, sample_size):
 def randomPairsWithReplacement(n_records, sample_size):
     # If the population is very large relative to the sample
     # size than we'll get very few duplicates by chance
-    warnings.warn("There may be duplicates in the sample")
+    warnings.warn("The same record pair may appear more than once in the sample")
 
     try:
         random_indices = numpy.random.randint(n_records,
@@ -246,6 +246,8 @@ def scoreDuplicates(records, data_model, classifier, num_cores=1, threshold=0):
                                     dtype=dtype,
                                     shape=(size,))
     else:
+        dtype = numpy.dtype([('pairs', object, 2),
+                             ('score', 'f4', 1)])
         scored_pairs = numpy.array([], dtype=dtype)
 
     reduce_process.join()
@@ -350,6 +352,9 @@ def scoreGazette(records, data_model, classifier, num_cores=1, threshold=0):
         raise ValueError("No records to match")
 
     score_records = ScoreGazette(data_model, classifier, threshold)
+
+    if sys.version < '3':
+        records = (list(y) for y in records)
 
     for scored_pairs in imap(score_records, records):
         yield scored_pairs
