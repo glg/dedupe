@@ -7,6 +7,8 @@ from collections import defaultdict
 import logging
 import time
 
+import numpy
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,3 +113,69 @@ def extractIndices(index_fields):
         indices.append((index_type, index, preprocess))
 
     return indices
+
+def block_sizes(blocker, data_d):
+    sizes = defaultdict(int)
+    for k, record_id in blocker(data_d.items()):
+        sizes[k] += 1
+
+    ret = {}
+    for k, n in sizes.items():
+        key,_,i = k.rpartition(':')
+        key = '{}:{}:{}'.format(key, i, blocker.predicates[int(i)])
+        ret[key] = n
+    return ret
+
+def print_block_sizes_info(sizes, name, show_n_largest=10):
+    sizes_sorted = sorted(sizes.items(), key=lambda x: x[1], reverse=True)
+
+    logger.info("{}:".format(name))
+    logger.info("  blocks: {:,}".format(len(sizes)))
+    logger.info("  mean size: {:.1f}".format(numpy.mean(list(sizes.values()))))
+    for percentile in (25, 50, 75, 95, 99):
+        logger.info("  {}th percentile: {}".format(
+            percentile,
+            numpy.percentile(list(sizes.values()), percentile)))
+    logger.info("  largest {} blocks:".format(show_n_largest))
+    for i in range(show_n_largest):
+        k, size = sizes_sorted[i]
+        logger.info("    {}: {:,}".format(repr(k), size))
+
+def print_blocker_stats(blocker, data_d, data_d2=None):
+    sizes1 = block_sizes(blocker, data_d)
+    print_block_sizes_info(sizes1, 'Block stats for data1')
+
+    pair_sizes = {}
+    if data_d2 is not None:
+        sizes2 = block_sizes(blocker, data_d2)
+        print_block_sizes_info(sizes2, 'Block stats for data2')
+
+        for k, n1 in sizes1.items():
+            n2 = sizes2.get(k, 0)
+            if not n2:
+                continue
+            pair_sizes[k] = n1 * n2
+    else:
+        pair_sizes = {k: n*n for k, n in sizes1.items()}
+
+    print_block_sizes_info(pair_sizes, 'Blocked pairs to be scored')
+
+    logger.info('')
+    logger.info('TOTAL BLOCKED PAIRS: {:,}'.format(
+        numpy.sum(list(pair_sizes.values()))))
+    logger.info('')
+
+def print_blocker_recall(blocker, training_pairs):
+    labels = []
+    for record_1, record_2 in training_pairs.get('match', []):
+        for predicate in blocker.predicates:
+                keys = predicate(record_1)
+                if keys:
+                    if set(predicate(record_2, target=True)) & set(keys):
+                        labels.append(1)
+                        break
+        else:
+            labels.append(0)
+
+    logger.info('ESTIMATED BLOCKING RECALL: {}'.format(sum(labels) / len(labels)))
+    logger.info('')
