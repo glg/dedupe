@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class BlockLearner(object):
-    def learn(self, matches, recall, exclude_exists_compounds=True):
+    def learn(self, matches, recall, exclude_low_cardinality_predicates=True):
         '''
         Takes in a set of training pairs and predicates and tries to find
         a good set of blocking rules.
@@ -23,7 +23,7 @@ class BlockLearner(object):
 
         dupe_cover = cover(self.blocker, matches,
                            self.total_cover, compound_length,
-                           exclude_exists_compounds)
+                           exclude_low_cardinality_predicates)
         comparison_count = self.comparisons(dupe_cover, compound_length)
 
         dupe_cover = dominators(dupe_cover, comparison_count, comparison=True)
@@ -258,11 +258,12 @@ class BranchBound(object):
 
         return coverage
 
-
-def cover(blocker, pairs, total_cover, compound_length, exclude_exists_compounds=True):  # pragma: no cover
+def cover(blocker, pairs, total_cover, compound_length, exclude_low_cardinality_predicates=True):  # pragma: no cover
     cover = coveredPairs(blocker.predicates, pairs)
     cover = dominators(cover, total_cover)
-    cover = compound(cover, compound_length, exclude_exists_compounds)
+    cover = compound(cover, compound_length)
+    if exclude_low_cardinality_predicates:
+        cover = filter_low_cardinality_predicates(cover)
     cover = remaining_cover(cover)
 
     return cover
@@ -282,7 +283,7 @@ def coveredPairs(predicates, pairs):
     return cover
 
 
-def compound(cover, compound_length, exclude_exists_compounds=True):
+def compound(cover, compound_length):
     simple_predicates = sorted(cover, key=str)
     CP = predicates.CompoundPredicate
 
@@ -294,12 +295,6 @@ def compound(cover, compound_length, exclude_exists_compounds=True):
             if len(a) == 1:
                 a = a[0]
 
-            # compounds of two Exists predicates are usually bad, so exclude
-            if exclude_exists_compounds and \
-               isinstance(a, predicates.ExistsPredicate) and \
-               isinstance(b, predicates.ExistsPredicate):
-                continue
-
             if a in cover:
                 compound_cover = cover[a] & cover[b]
                 if compound_cover:
@@ -307,6 +302,28 @@ def compound(cover, compound_length, exclude_exists_compounds=True):
 
     return cover
 
+def low_cardinality_predicate(predicate):
+    if isinstance(predicate, predicates.ExistsPredicate):
+        return True
+    if isinstance(predicate, predicates.SimplePredicate):
+        if predicate.func.__name__ in ('magnitudeOfCardinality',
+                                       'existsPredicate'):
+            return True
+    return False
+
+def filter_low_cardinality_predicates(cover):
+    to_filter = []
+    for predicate in cover:
+        if isinstance(predicate, predicates.CompoundPredicate):
+            if low_cardinality_predicate(predicate[0]) and \
+               low_cardinality_predicate(predicate[1]):
+                to_filter += [predicate]
+        elif low_cardinality_predicate(predicate):
+            to_filter += [predicate]
+
+    for predicate in to_filter:
+        del cover[predicate]
+    return cover
 
 def remaining_cover(coverage, covered=None):
     if covered is None:
